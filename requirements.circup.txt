@@ -1,0 +1,16 @@
+Found device at /Volumes/CIRCUITPY, running CircuitPython 8.2.9.
+adafruit_fakerequests==1.0.14
+adafruit_miniqr==2.1.1
+adafruit_pixelbuf==2.0.4
+adafruit_requests==2.0.3
+neopixel==6.3.11
+simpleio==3.0.13
+adafruit_lis3dh==5.2.2
+adafruit_bitmap_font==2.1.1
+adafruit_bus_device==5.2.8
+adafruit_display_text==3.0.6
+adafruit_esp32spi==6.1.1
+adafruit_io==5.7.5
+adafruit_matrixportal==3.1.13
+adafruit_minimqtt==7.5.4
+adafruit_portalbase==1.16.1

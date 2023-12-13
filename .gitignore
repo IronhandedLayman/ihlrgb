@@ -1,0 +1,4 @@
+settings.toml
+bin/
+lib/
+pyvenv.cfg
