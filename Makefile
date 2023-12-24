@@ -11,6 +11,6 @@ upload: *.py requirements.circup.txt fonts/*.bdf
 	cp fonts/*.bdf /Volumes/CIRCUITPY/fonts
 
 uplink:
-	screen /dev/tty.usbmodem2112401 115200
+	screen /dev/tty.usbmodem2101 115200
 
 .PHONY: devenv upload

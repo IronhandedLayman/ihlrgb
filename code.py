@@ -4,9 +4,10 @@
 #
 # Heavily modified by Nathaniel Dean started December 2023, License MIT
 
-import asyncio
 from os import getenv
 from adafruit_bitmap_font import bitmap_font
+import rtc
+import json
 import board
 import busio
 from digitalio import DigitalInOut
@@ -15,28 +16,33 @@ import displayio
 import rgbmatrix
 import adafruit_display_text.label
 import terminalio
+import time
+from adafruit_datetime import datetime
 import adafruit_requests as requests
 import adafruit_esp32spi.adafruit_esp32spi_socket as socket
 from adafruit_esp32spi import adafruit_esp32spi
 
 TEXT_URL = "http://wifitest.adafruit.com/testwifi/index.html"
-JSON_URL = "http://api.coindesk.com/v1/bpi/currentprice/USD.json"
+BTC_URL = "http://api.coindesk.com/v1/bpi/currentprice/USD.json"
+WTC_URL = "http://worldtimeapi.org/api/ip"
 
 SETUP_WIFI = "SETUP_WIFI"
 RESET_DISPLAY = "RESET_DISPLAY"
 SETUP_BOOT_SCREEN = "SETUP_BOOT_SCREEN"
 SETUP_BOARD_STATE = "SETUP_BOARD_STATE"
 SETUP_WIFI_STATE = "SETUP_WIFI_STATE"
+SET_RTC = "SET_RTC"
 RUN_DEMO_STATE = "RUN_DEMO_STATE"
 EXIT_STATE = "EXIT_STATE"
 
 DISPLAY_BOOTING = "Booting"
+DISPLAY_DEMO1 = "Demo1"
 
 IHLRGB_VERSION = "v0.0.2"
 
 
 class LinedGroup:
-    def __init__(self, name, fontchoice=None):
+    def __init__(self, name, fontchoice=None, textcolor=0x00A000):
         self.font = terminalio.FONT
         if fontchoice is not None:
             self.font = bitmap_font.load_font(f"fonts/{fontchoice}.bdf")
@@ -61,6 +67,9 @@ class LinedGroup:
             self.group.append(line)
 
         self.name = name
+
+    def update_anim(self):
+        pass
 
     def group(self):
         return self.group
@@ -105,13 +114,15 @@ class IHLRGB:
         if self.state == RESET_DISPLAY:
             self.state = self.reset_display()
         elif self.state == SETUP_BOOT_SCREEN:
-            self.state = self.setup_bootscreen()
+            self.state = self.setup_screens()
         elif self.state == SETUP_BOARD_STATE:
             self.state = self.setup_board()
         elif self.state == SETUP_WIFI:
             self.state = self.setup_wifi()
         elif self.state == RUN_DEMO_STATE:
             self.state = self.run_demo_tick()
+        elif self.state == SET_RTC:
+            self.state = self.set_rtc()
         else:
             print(f"What state is this? {self.state}")
 
@@ -119,17 +130,40 @@ class IHLRGB:
         pass
 
     def run_demo_tick(self):
-        pass
+        self.displaynewstate = DISPLAY_DEMO1
+        c = rtc.RTC().datetime
+        hr = str(100 + c.tm_hour)[1:]
+        mn = str(100 + c.tm_min)[1:]
+        sc = str(100 + c.tm_sec)[1:]
+        self.demopage_line(0, f"{c.tm_mon}/{c.tm_mday}/{c.tm_year}")
+        self.demopage_line(1, f"{hr}:{mn}:{sc}")
+
+        return RUN_DEMO_STATE
+
+    def set_rtc(self):
+        rsp = requests.get(WTC_URL)
+        if rsp.status_code == 200:
+            rr = json.loads(rsp.content)
+            newtime = datetime.fromisoformat(rr["datetime"])
+            rtc.RTC().datetime = newtime.timetuple()
+            print(f"New time: {time.localtime()}")
+            time.sleep(1)
+        return RUN_DEMO_STATE
 
     def refresh_screen(self):
-        print("in refresh_screen")
         if self.display is not None:
-            print("refreshing display")
             if self.displaynewstate != self.displaystate:
                 self.displaystate = self.displaynewstate
-                self.rootgroup = self.allgroups[self.displaynewstate].group
+                self.rootgroup = self.allgroups[self.displaystate].group
                 self.display.root_group = self.rootgroup
-            self.display.refresh(minimum_frames_per_second=0)
+            if (
+                self.displaystate is not None
+                and self.allgroups is not None
+                and self.displaystate in self.allgroups
+            ):
+                self.allgroups[self.displaystate].update_anim()
+            while not self.display.refresh(minimum_frames_per_second=0):
+                time.sleep(0.001)
 
     def reset_display(self):
         displayio.release_displays()
@@ -158,6 +192,11 @@ class IHLRGB:
         self.display = framebufferio.FramebufferDisplay(matrix, auto_refresh=False)
         return SETUP_BOOT_SCREEN
 
+    def setup_screens(self):
+        self.setup_bootscreen()
+        self.setup_demoscreen()
+        return SETUP_BOARD_STATE
+
     def setup_bootscreen(self):
         bootscreen = LinedGroup(DISPLAY_BOOTING, "4x6")
         self.allgroups[DISPLAY_BOOTING] = bootscreen
@@ -170,10 +209,19 @@ class IHLRGB:
             bootscreen.set_text(i, "")
         bootscreen.set_text(0, f"IHLRGB {IHLRGB_VERSION}")
 
-        return SETUP_BOARD_STATE
-
     def bootscreen_line(self, lineno, text):
         self.allgroups["Booting"].set_text(lineno, text)
+        self.refresh_screen()
+
+    def setup_demoscreen(self):
+        demoscreen = LinedGroup(DISPLAY_DEMO1)
+        self.allgroups[DISPLAY_DEMO1] = demoscreen
+
+        for i in range(len(demoscreen.lines)):
+            demoscreen.set_text(i, "")
+
+    def demopage_line(self, lineno, text):
+        self.allgroups[DISPLAY_DEMO1].set_text(lineno, text)
         self.refresh_screen()
 
     def setup_board(self):
@@ -229,84 +277,16 @@ class IHLRGB:
         )
         print("Ping google.com: %d ms" % self.esp.ping("google.com"))
 
-        return EXIT_STATE
+        return SET_RTC
 
     def exit_state(self):
         while True:
-            pass
+            time.sleep(1)
 
     def find_access_points(self):
         for ap in self.esp.scan_networks():
             print("\t%s\t\tRSSI: %d" % (str(ap["ssid"], "utf-8"), ap["rssi"]))
 
-
-"""
-# This function will scoot one label a pixel to the left and send it back to
-# the far right if it's gone all the way off screen. This goes in a function
-# because we'll do exactly the same thing with line1 and line2 below.
-def scroll(line):
-    line.x = line.x - 1
-    line_width = line.bounding_box[2]
-    if line.x < -line_width:
-        line.x = display.width
-
-
-# This function scrolls lines backwards.  Try switching which function is
-# called for line2 below!
-def reverse_scroll(line):
-    line.x = line.x + 1
-    line_width = line.bounding_box[2]
-    if line.x >= display.width:
-        line.x = -line_width
-
-
-
-def run_demo():
-    print("Fetching text from", TEXT_URL)
-    r = requests.get(TEXT_URL)
-    print("-" * 40)
-    print(r.text)
-    print("-" * 40)
-    r.close()
-
-    print()
-    print("Fetching json from", JSON_URL)
-    r = requests.get(JSON_URL)
-    print("-" * 40)
-    print(r.json())
-    print("-" * 40)
-    r.close()
-
-    line1 = adafruit_display_text.label.Label(
-        terminalio.FONT,
-        color=0xFF0000,
-        text="This scroller is brought to you by CircuitPython RGBMatrix",
-    )
-    line1.x = display.width
-    line1.y = 8
-
-    line2 = adafruit_display_text.label.Label(
-        terminalio.FONT,
-        color=0x0080FF,
-        text="Hello to all CircuitPython contributors worldwide <3",
-    )
-    line2.x = display.width
-    line2.y = 24
-
-    # Put each line of text into a Group, then show that group.
-    g = displayio.Group()
-    g.append(line1)
-    g.append(line2)
-    display.root_group = g
-
-    # You can add more effects in this loop. For instance, maybe you want to set the
-    # color of each label to a different value.
-    while True:
-        scroll(line1)
-        scroll(line2)
-        # reverse_scroll(line2)
-        display.refresh(minimum_frames_per_second=0)
-"""
 
 if __name__ == "__main__":
     IHLRGB().run()

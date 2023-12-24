@@ -1,4 +1,5 @@
 settings.toml
+*.donotsend
 bin/
 lib/
 pyvenv.cfg
